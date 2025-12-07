@@ -206,22 +206,37 @@ class IncrementalIndexer:
                 except Exception as e:
                     logger.warning(f"Failed to chunk {file_path}: {e}")
 
-            # Embed all chunks in one batched call
+            # Embed chunks in batches to avoid memory issues
             all_embedding_results = []
             if all_chunks:
                 try:
-                    all_embedding_results = self.embedder.embed_chunks(all_chunks)
-                    # Update metadata
-                    for chunk, embedding_result in zip(all_chunks, all_embedding_results):
-                        embedding_result.metadata['project_name'] = project_name
-                        embedding_result.metadata['content'] = chunk.content
+                    # Process in larger batches to handle big repositories
+                    batch_size = 1000  # Process 1000 chunks at a time
+                    logger.info(f"Processing {len(all_chunks)} chunks in batches of {batch_size}")
+
+                    for i in range(0, len(all_chunks), batch_size):
+                        batch = all_chunks[i:i + batch_size]
+                        logger.info(f"Embedding batch {i // batch_size + 1}/{(len(all_chunks) + batch_size - 1) // batch_size} ({len(batch)} chunks)")
+
+                        # Use smaller batch size for embedding to avoid OOM on MPS
+                        batch_results = self.embedder.embed_chunks(batch, batch_size=8)
+
+                        # Update metadata
+                        for chunk, embedding_result in zip(batch, batch_results):
+                            embedding_result.metadata['project_name'] = project_name
+                            embedding_result.metadata['content'] = chunk.content
+
+                        all_embedding_results.extend(batch_results)
+
+                        # Add batch to index immediately to free memory
+                        if batch_results:
+                            self.indexer.add_embeddings(batch_results)
+
+                        logger.info(f"Batch complete. Total embedded: {len(all_embedding_results)}/{len(all_chunks)}")
                 except Exception as e:
-                    logger.warning(f"Embedding failed: {e}")
-            
-            # Add all embeddings to index at once
-            if all_embedding_results:
-                self.indexer.add_embeddings(all_embedding_results)
-            
+                    logger.warning(f"Embedding failed: {e}", exc_info=True)
+
+            # Embeddings already added to index in batches above
             chunks_added = len(all_embedding_results)
             
             # Save snapshot
