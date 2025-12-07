@@ -209,17 +209,18 @@ class IncrementalIndexer:
             # Embed chunks in batches to avoid memory issues
             all_embedding_results = []
             if all_chunks:
-                try:
-                    # Process in larger batches to handle big repositories
-                    batch_size = 1000  # Process 1000 chunks at a time
-                    logger.info(f"Processing {len(all_chunks)} chunks in batches of {batch_size}")
+                # Process in larger batches to handle big repositories
+                batch_size = 500  # Process 500 chunks at a time for better memory safety
+                logger.info(f"Processing {len(all_chunks)} chunks in batches of {batch_size}")
 
-                    for i in range(0, len(all_chunks), batch_size):
-                        batch = all_chunks[i:i + batch_size]
-                        logger.info(f"Embedding batch {i // batch_size + 1}/{(len(all_chunks) + batch_size - 1) // batch_size} ({len(batch)} chunks)")
+                for i in range(0, len(all_chunks), batch_size):
+                    batch = all_chunks[i:i + batch_size]
+                    logger.info(f"Embedding batch {i // batch_size + 1}/{(len(all_chunks) + batch_size - 1) // batch_size} ({len(batch)} chunks)")
 
+                    try:
                         # Use smaller batch size for embedding to avoid OOM on MPS
-                        batch_results = self.embedder.embed_chunks(batch, batch_size=8)
+                        # Reduced to 4 for better memory safety on Apple Silicon
+                        batch_results = self.embedder.embed_chunks(batch, batch_size=4)
 
                         # Update metadata
                         for chunk, embedding_result in zip(batch, batch_results):
@@ -233,8 +234,10 @@ class IncrementalIndexer:
                             self.indexer.add_embeddings(batch_results)
 
                         logger.info(f"Batch complete. Total embedded: {len(all_embedding_results)}/{len(all_chunks)}")
-                except Exception as e:
-                    logger.warning(f"Embedding failed: {e}", exc_info=True)
+                    except Exception as e:
+                        logger.error(f"Batch {i // batch_size + 1} failed: {e}", exc_info=True)
+                        logger.info(f"Continuing with next batch...")
+                        continue
 
             # Embeddings already added to index in batches above
             chunks_added = len(all_embedding_results)
